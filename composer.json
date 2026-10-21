@@ -1,0 +1,35 @@
+{
+  "name": "dsplat/multi-tenant-saas-module-distribution",
+  "description": "分销 - 分销员/归因关系/佣金规则与流水/提现/打款驱动，订阅 Order/Channel 事件",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "MultiTenantSaas\\Modules\\Distribution\\": ""
+    }
+  },
+  "require": {
+    "php": "^8.3",
+    "dsplat/multi-tenant-saas": "^1.0 || ^2.0 || ^3.0",
+    "dsplat/multi-tenant-saas-base": "^3.4",
+    "yansongda/pay": "^3.7",
+    "dsplat/multi-tenant-saas-module-channel": "^3.4",
+    "dsplat/multi-tenant-saas-module-order": "^3.4"
+  },
+  "extra": {
+    "saas": {
+      "name": "distribution",
+      "priority": 300,
+      "dependencies": [
+        "channel",
+        "order"
+      ],
+      "conflicts": [],
+      "requires_core": ">=1.0.0 <4.0.0",
+      "provider": "MultiTenantSaas\\Modules\\Distribution\\DistributionServiceProvider",
+      "tenant_toggleable": true,
+      "module_loadable": true,
+      "default_tenant_enabled": true
+    }
+  }
+}
