@@ -34,7 +34,7 @@ export interface WithdrawalRecord {
   distributorId: number
   distributorName: string
   amount: number
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'approved' | 'processing' | 'paid' | 'failed' | 'rejected'
   bankName: string
   bankAccount: string
   remark: string

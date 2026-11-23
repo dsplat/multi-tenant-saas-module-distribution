@@ -266,6 +266,8 @@ class DistributorCenterController extends BaseController
             'bankName' => 'nullable|string|max:100',
             'bankAccount' => 'nullable|string|max:100',
             'accountName' => 'nullable|string|max:100',
+            // 微信自动打款目标 openid；银行渠道可不填
+            'openid' => 'nullable|string|max:100',
             'remark' => 'nullable|string|max:255',
         ]);
 
@@ -275,6 +277,7 @@ class DistributorCenterController extends BaseController
             'bank_name' => $validated['bankName'] ?? null,
             'bank_account' => $validated['bankAccount'] ?? null,
             'account_name' => $validated['accountName'] ?? null,
+            'openid' => $validated['openid'] ?? null,
             'remark' => $validated['remark'] ?? null,
         ]);
 
@@ -346,7 +349,7 @@ class DistributorCenterController extends BaseController
         $canonicalHost = app(DomainService::class)->getCanonicalHost((int) TenantContext::getId());
         $base = $canonicalHost ? "https://{$canonicalHost}" : config('app.url');
 
-        return rtrim((string) $base, '/') . '/h5/distribution/apply?invite=' . $inviteCode;
+        return rtrim((string) $base, '/').'/h5/distribution/apply?invite='.$inviteCode;
     }
 
     protected function transformProfile(Distributor $d): array

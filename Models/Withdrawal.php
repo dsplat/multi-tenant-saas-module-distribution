@@ -21,6 +21,9 @@ class Withdrawal extends Model
 
     public const STATUS_APPROVED = 'approved';
 
+    /** 已提交渠道、等待终态确认（不得重复打款，也不得提前退款） */
+    public const STATUS_PROCESSING = 'processing';
+
     public const STATUS_REJECTED = 'rejected';
 
     public const STATUS_PAID = 'paid';
@@ -30,7 +33,7 @@ class Withdrawal extends Model
     protected $fillable = [
         'tenant_id', 'distributor_id', 'amount', 'fee', 'actual_amount',
         'status', 'account_type', 'bank_name', 'bank_account', 'account_name',
-        'remark', 'audit_remark', 'audited_at', 'paid_at', 'payout_order_id',
+        'account_openid', 'remark', 'audit_remark', 'audited_at', 'paid_at', 'payout_order_id',
     ];
 
     protected function casts(): array

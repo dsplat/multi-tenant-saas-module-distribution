@@ -316,6 +316,9 @@ const ruleStatusOptions = [
 const withdrawalStatusOptions = [
   { label: '待审核', value: 'pending' },
   { label: '已通过', value: 'approved' },
+  { label: '处理中', value: 'processing' },
+  { label: '已打款', value: 'paid' },
+  { label: '已失败', value: 'failed' },
   { label: '已拒绝', value: 'rejected' },
 ]
 
@@ -336,6 +339,9 @@ function getWithdrawalTagType(status?: string) {
   const map: Record<string, 'warning' | 'success' | 'danger' | 'info'> = {
     pending: 'warning',
     approved: 'success',
+    processing: 'info',
+    paid: 'success',
+    failed: 'danger',
     rejected: 'danger',
   }
   return map[status ?? ''] ?? 'info'

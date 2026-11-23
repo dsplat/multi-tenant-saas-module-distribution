@@ -9,11 +9,13 @@ use Illuminate\Http\Request;
 use MultiTenantSaas\Context\TenantContext;
 use MultiTenantSaas\Http\Controllers\BaseController;
 use MultiTenantSaas\Modules\Distribution\Models\Distributor;
+use MultiTenantSaas\Modules\Distribution\Models\Withdrawal;
 use MultiTenantSaas\Modules\Distribution\Services\CommissionRuleService;
 use MultiTenantSaas\Modules\Distribution\Services\DistributionConfigService;
 use MultiTenantSaas\Modules\Distribution\Services\DistributionRelationService;
 use MultiTenantSaas\Modules\Distribution\Services\PayoutConfigService;
 use MultiTenantSaas\Modules\Distribution\Services\WithdrawalService;
+use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
 /**
  * 分销系统 B 端管理控制器
@@ -40,7 +42,7 @@ class DistributionController extends BaseController
         $query = Distributor::where('tenant_id', $tenantId)->with('parent');
 
         if ($request->filled('name')) {
-            $query->where('name', 'like', '%' . $request->input('name') . '%');
+            $query->where('name', 'like', '%'.$request->input('name').'%');
         }
         if ($request->filled('level')) {
             $query->where('level', (int) $request->input('level'));
@@ -216,11 +218,27 @@ class DistributionController extends BaseController
 
     public function approveWithdrawal(Request $request, $id): JsonResponse
     {
-        $tenantId = (int) TenantContext::getId();
-        $withdrawal = $this->withdrawalService->audit($tenantId, (int) $id, true, $request->input('remark'));
+        $validated = $request->validate([
+            'remark' => 'nullable|string|max:255',
+            // 微信转账必需；申请时未填可在此补录，落库后按原单号对账
+            'openid' => 'nullable|string|max:100',
+        ]);
 
-        // 审核通过后尝试执行打款（自动渠道直接打款；手动渠道保持 approved 等待人工确认）
-        $withdrawal = $this->withdrawalService->payout($tenantId, (int) $withdrawal->withdrawal_id);
+        $tenantId = (int) TenantContext::getId();
+        $withdrawal = $this->withdrawalService->find($tenantId, (int) $id);
+
+        // 幂等重入：pending 才审核；approved/processing 表示上一次编排未完成或仍在途，
+        // 直接走 payout（在途单只查终态，不会重复提交渠道）。
+        if ($withdrawal->status === Withdrawal::STATUS_PENDING) {
+            $withdrawal = $this->withdrawalService->audit($tenantId, (int) $id, true, $validated['remark'] ?? null);
+        } elseif (! in_array($withdrawal->status, [Withdrawal::STATUS_APPROVED, Withdrawal::STATUS_PROCESSING], true)) {
+            throw new UnprocessableEntityHttpException('Withdrawal cannot be approved');
+        }
+
+        // 审核通过后执行打款：自动渠道提交后进入 processing，终态由对账确认；
+        // 手动渠道保持 approved，等待人工确认。
+        $overrides = array_filter(['openid' => $validated['openid'] ?? null]);
+        $withdrawal = $this->withdrawalService->payout($tenantId, (int) $withdrawal->withdrawal_id, $overrides);
 
         return response()->json(['success' => true, 'data' => $this->transformWithdrawal($withdrawal)]);
     }
@@ -241,6 +259,17 @@ class DistributionController extends BaseController
     {
         $tenantId = (int) TenantContext::getId();
         $withdrawal = $this->withdrawalService->confirmPaid($tenantId, (int) $id, $request->input('channelTradeNo'));
+
+        return response()->json(['success' => true, 'data' => $this->transformWithdrawal($withdrawal)]);
+    }
+
+    /**
+     * 查询自动打款终态（受理/超时后由运营手动触发，或由定时命令批量执行）
+     */
+    public function reconcileWithdrawal(Request $request, $id): JsonResponse
+    {
+        $tenantId = (int) TenantContext::getId();
+        $withdrawal = $this->withdrawalService->reconcileByWithdrawal($tenantId, (int) $id);
 
         return response()->json(['success' => true, 'data' => $this->transformWithdrawal($withdrawal)]);
     }

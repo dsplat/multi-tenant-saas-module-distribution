@@ -88,7 +88,7 @@ class CommissionEngine
         }
 
         if ($records) {
-            Log::info("CommissionEngine: {$event->orderType}#{$event->orderId} generated " . count($records) . ' commission(s)');
+            Log::info("CommissionEngine: {$event->orderType}#{$event->orderId} generated ".count($records).' commission(s)');
         }
 
         return $records;
@@ -128,13 +128,37 @@ class CommissionEngine
                 );
 
                 return $record;
-            });
+            }, 3);
         } catch (QueryException $e) {
-            // 唯一键冲突 → 已计佣，幂等跳过
+            // 只把「本表业务唯一键冲突」当幂等；锁等待超时/死锁/连接失败等
+            // QueryException 必须继续抛出，不能被误记成 duplicate 后吞掉。
+            if (! $this->isDuplicateCommissionKey($e)) {
+                throw $e;
+            }
+
             Log::warning("CommissionEngine: duplicate commission skipped for {$event->orderType}#{$event->orderId} L{$level}");
 
             return null;
         }
+    }
+
+    /**
+     * 是否仅命中 commission_records 的业务唯一键。
+     *
+     * 兼容 MySQL（key 名出现在消息里）与 SQLite（UNIQUE constraint failed + 列名）。
+     */
+    protected function isDuplicateCommissionKey(QueryException $e): bool
+    {
+        $sqlState = (string) ($e->errorInfo[0] ?? $e->getCode());
+
+        if ($sqlState !== '23000') {
+            return false;
+        }
+
+        $message = $e->getMessage();
+
+        return str_contains($message, 'commission_records_order_level_unique')
+            || (str_contains($message, 'UNIQUE constraint failed') && str_contains($message, 'commission_records.order_type'));
     }
 
     /**
@@ -151,29 +175,46 @@ class CommissionEngine
         $settleDays = (int) $this->configService->getConfig($tenantId)['settle_days'];
         $dueTime = now()->subDays($settleDays);
 
+        // 候选集只是「可能到期」的快照；状态与记账必须在同一事务内重新锁定确认。
         $records = CommissionRecord::where('tenant_id', $tenantId)
             ->where('status', CommissionRecord::STATUS_PENDING)
             ->where('created_at', '<=', $dueTime)
             ->get();
 
         $count = 0;
+
         foreach ($records as $record) {
-            DB::transaction(function () use ($tenantId, $record) {
-                $record->update([
+            $settled = DB::transaction(function () use ($tenantId, $record): bool {
+                $locked = CommissionRecord::where('commission_record_id', $record->commission_record_id)
+                    ->where('status', CommissionRecord::STATUS_PENDING)
+                    ->lockForUpdate()
+                    ->first();
+
+                // 已被并发的结算/冲销事务转换：本事务不得再记账。
+                if (! $locked) {
+                    return false;
+                }
+
+                $locked->update([
                     'status' => CommissionRecord::STATUS_SETTLED,
                     'settled_at' => now(),
                 ]);
 
                 $this->ledgerService->settleCommission(
                     $tenantId,
-                    (int) $record->distributor_id,
-                    (int) $record->commission_amount,
+                    (int) $locked->distributor_id,
+                    (int) $locked->commission_amount,
                     'commission_record',
-                    (int) $record->commission_record_id,
-                    "{$record->level}级佣金结算"
+                    (int) $locked->commission_record_id,
+                    "{$locked->level}级佣金结算"
                 );
-            });
-            $count++;
+
+                return true;
+            }, 3);
+
+            if ($settled) {
+                $count++;
+            }
         }
 
         return $count;
@@ -196,23 +237,39 @@ class CommissionEngine
             ->get();
 
         $count = 0;
+
         foreach ($records as $record) {
-            DB::transaction(function () use ($tenantId, $record) {
-                $record->update([
+            $cancelled = DB::transaction(function () use ($tenantId, $record): bool {
+                $locked = CommissionRecord::where('commission_record_id', $record->commission_record_id)
+                    ->where('status', CommissionRecord::STATUS_PENDING)
+                    ->lockForUpdate()
+                    ->first();
+
+                // 已被到期结算抢先转换：退款不再冲销（业务约定已结算不退）。
+                if (! $locked) {
+                    return false;
+                }
+
+                $locked->update([
                     'status' => CommissionRecord::STATUS_CANCELLED,
                     'cancel_reason' => '订单退款',
                 ]);
 
                 $this->ledgerService->cancelCommission(
                     $tenantId,
-                    (int) $record->distributor_id,
-                    (int) $record->commission_amount,
+                    (int) $locked->distributor_id,
+                    (int) $locked->commission_amount,
                     'commission_record',
-                    (int) $record->commission_record_id,
-                    "{$record->level}级佣金冲销（退款）"
+                    (int) $locked->commission_record_id,
+                    "{$locked->level}级佣金冲销（退款）"
                 );
-            });
-            $count++;
+
+                return true;
+            }, 3);
+
+            if ($cancelled) {
+                $count++;
+            }
         }
 
         return $count;

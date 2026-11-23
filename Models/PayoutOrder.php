@@ -19,6 +19,9 @@ class PayoutOrder extends Model
 
     public const STATUS_PENDING = 'pending';
 
+    /** 渠道已受理或结果未知：必须按原商户单号查询终态，不得直接结算/退款 */
+    public const STATUS_PROCESSING = 'processing';
+
     public const STATUS_SUCCESS = 'success';
 
     public const STATUS_FAILED = 'failed';
@@ -47,6 +50,6 @@ class PayoutOrder extends Model
      */
     public static function generateTradeNo(): string
     {
-        return 'PO' . date('YmdHis') . strtoupper(substr(uniqid(), -6));
+        return 'PO'.date('YmdHis').strtoupper(substr(uniqid(), -6));
     }
 }

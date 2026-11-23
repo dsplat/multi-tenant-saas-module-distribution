@@ -54,6 +54,7 @@ Route::middleware('rbac.permission:sales.manage')->group(function () {
     Route::put('withdrawals/{id}/approve', [DistributionController::class, 'approveWithdrawal']);
     Route::put('withdrawals/{id}/reject', [DistributionController::class, 'rejectWithdrawal']);
     Route::put('withdrawals/{id}/confirm-paid', [DistributionController::class, 'confirmWithdrawalPaid']);
+    Route::post('withdrawals/{id}/reconcile', [DistributionController::class, 'reconcileWithdrawal']);
 
     Route::put('distribution-config', [DistributionController::class, 'updateConfig']);
     Route::put('payout-config', [DistributionController::class, 'updatePayoutConfig']);

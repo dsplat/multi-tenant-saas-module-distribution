@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use MultiTenantSaas\Modules\Channel\Events\LiveCodeScanned;
 use MultiTenantSaas\Modules\Contracts\ModuleServiceProvider;
+use MultiTenantSaas\Modules\Distribution\Console\Commands\ReconcilePayoutsCommand;
 use MultiTenantSaas\Modules\Distribution\Contracts\DistributorProfileContract;
 use MultiTenantSaas\Modules\Distribution\Listeners\LiveCodeScanAttributionListener;
 use MultiTenantSaas\Modules\Distribution\Listeners\OrderPaidCommissionListener;
@@ -52,6 +53,13 @@ class DistributionServiceProvider extends ModuleServiceProvider
         $this->registerListeners();
     }
 
+    protected function registerModuleCommands(): void
+    {
+        $this->commands([
+            ReconcilePayoutsCommand::class,
+        ]);
+    }
+
     private function registerListeners(): void
     {
         if (class_exists(OrderPaid::class)) {
@@ -76,17 +84,17 @@ class DistributionServiceProvider extends ModuleServiceProvider
         OptionalModule::ensure(self::MW_VERIFY_OPERATOR_TENANT, '分销模块路由加载', 'Infrastructure');
 
         $moduleDir = $this->getModulePath();
-        $moduleGate = 'module.enabled:' . $this->moduleGateName();
+        $moduleGate = 'module.enabled:'.$this->moduleGateName();
         $prefix = (string) config('distribution.route_prefix', 'api/v1');
 
-        $apiRoute = $moduleDir . '/Routes/api.php';
+        $apiRoute = $moduleDir.'/Routes/api.php';
         if (file_exists($apiRoute)) {
             Route::middleware(['api', 'auth:sanctum', 'throttle:api', 'tenant.identify', self::MW_VERIFY_OPERATOR_TENANT, $moduleGate])
                 ->prefix($prefix)
                 ->group($apiRoute);
         }
 
-        $optionalRoute = $moduleDir . '/Routes/optional.php';
+        $optionalRoute = $moduleDir.'/Routes/optional.php';
         if (file_exists($optionalRoute)) {
             Route::middleware(['api', 'throttle:api', 'tenant.identify', self::MW_OPTIONAL_SANCTUM_AUTH, $moduleGate])
                 ->prefix($prefix)
