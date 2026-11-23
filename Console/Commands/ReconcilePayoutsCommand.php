@@ -32,7 +32,9 @@ class ReconcilePayoutsCommand extends Command
     {
         $limit = max(1, (int) $this->option('limit'));
         $cutoff = now()->subMinutes(max(0, (int) $this->option('min-age')));
-        $statuses = [PayoutOrder::STATUS_PENDING, PayoutOrder::STATUS_PROCESSING];
+        // 只对账「已发送/已受理」的单；pending 是尚未发出（或发送前中断），
+        // 由 payout() 以原 trade_no 重提，绝不能被对账先改成 processing 后失去发送路径。
+        $statuses = [PayoutOrder::STATUS_PROCESSING];
 
         $tenantOption = $this->option('tenant');
         $tenantIds = $tenantOption !== null && $tenantOption !== ''
@@ -41,6 +43,10 @@ class ReconcilePayoutsCommand extends Command
                 ->whereIn('status', $statuses)
                 ->where('channel', '!=', PayoutConfig::CHANNEL_MANUAL)
                 ->where('created_at', '<=', $cutoff)
+                ->where(function ($query) {
+                    $query->whereNull('next_reconcile_at')
+                        ->orWhere('next_reconcile_at', '<=', now());
+                })
                 ->distinct()
                 ->pluck('tenant_id')
                 ->map(fn ($id): int => (int) $id)
@@ -57,6 +63,11 @@ class ReconcilePayoutsCommand extends Command
                     ->whereIn('status', $statuses)
                     ->where('channel', '!=', PayoutConfig::CHANNEL_MANUAL)
                     ->where('created_at', '<=', $cutoff)
+                    ->where(function ($query) {
+                        $query->whereNull('next_reconcile_at')
+                            ->orWhere('next_reconcile_at', '<=', now());
+                    })
+                    ->orderBy('next_reconcile_at')
                     ->orderBy('payout_order_id')
                     ->limit($limit)
                     ->get();

@@ -29,6 +29,7 @@ class PayoutOrder extends Model
     protected $fillable = [
         'tenant_id', 'withdrawal_id', 'channel', 'amount', 'account_info',
         'trade_no', 'channel_trade_no', 'status', 'fail_reason', 'paid_at',
+        'reconcile_attempts', 'next_reconcile_at',
     ];
 
     protected function casts(): array
@@ -37,6 +38,8 @@ class PayoutOrder extends Model
             'amount' => 'integer',
             'account_info' => 'array',
             'paid_at' => 'datetime',
+            'reconcile_attempts' => 'integer',
+            'next_reconcile_at' => 'datetime',
         ];
     }
 

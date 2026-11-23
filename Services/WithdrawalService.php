@@ -148,7 +148,6 @@ class WithdrawalService
         TenantContext::setTenantId((string) $tenantId);
 
         $payoutConfig = $this->payoutConfigService->getConfig($tenantId);
-        $driver = $this->driverResolver->resolve($payoutConfig->channel);
 
         // 阶段一：本地单据提交。渠道调用不得位于此事务内，否则渠道成功后本地回滚
         // 会留下「已受理但本地无记录」的窗口，重试又生成新的商户单号。
@@ -214,6 +213,16 @@ class WithdrawalService
             return [$withdrawal->fresh(), $payoutOrder, true];
         });
 
+        // 已有打款单的渠道必须与当前租户配置一致：渠道切换后用新配置的驱动重试，
+        // 会把人工单送进自动转账，或用错商户身份查单。显式失败，要求先恢复原渠道配置。
+        if ($payoutOrder->channel !== $payoutConfig->channel) {
+            throw new UnprocessableEntityHttpException(
+                'Payout channel changed since the order was created; restore the original channel config before retrying'
+            );
+        }
+
+        $driver = $this->driverResolver->resolve($payoutOrder->channel);
+
         // 手动渠道：不自动打款，等待人工确认
         if (! $driver->isAutomatic()) {
             return $withdrawal;
@@ -261,6 +270,13 @@ class WithdrawalService
         }
 
         $payoutConfig = $this->payoutConfigService->getConfig($tenantId);
+
+        if ($payoutConfig->channel !== $order->channel) {
+            throw new UnprocessableEntityHttpException(
+                'Payout channel changed since the order was created; restore the original channel config before reconciling'
+            );
+        }
+
         $driver = $this->driverResolver->resolve($order->channel);
 
         if (! $driver->isAutomatic()) {
@@ -447,10 +463,14 @@ class WithdrawalService
                 return;
             }
 
+            $attempts = (int) $locked->reconcile_attempts + 1;
+
             $locked->update([
                 'status' => PayoutOrder::STATUS_PROCESSING,
                 'channel_trade_no' => $channelTradeNo ?: $locked->channel_trade_no,
                 'fail_reason' => $failReason ?: $locked->fail_reason,
+                'reconcile_attempts' => $attempts,
+                'next_reconcile_at' => now()->addMinutes($this->reconcileBackoffMinutes($attempts)),
             ]);
 
             $withdrawal = Withdrawal::where('withdrawal_id', $locked->withdrawal_id)->lockForUpdate()->first();
@@ -489,6 +509,7 @@ class WithdrawalService
                     'channel_trade_no' => $channelTradeNo ?: $locked->channel_trade_no,
                     'paid_at' => $paidAt,
                     'fail_reason' => null,
+                    'next_reconcile_at' => null,
                 ]);
             }
 
@@ -535,6 +556,7 @@ class WithdrawalService
                 $locked->update([
                     'status' => PayoutOrder::STATUS_FAILED,
                     'fail_reason' => $failReason ?: $locked->fail_reason,
+                    'next_reconcile_at' => null,
                 ]);
             }
 
@@ -565,6 +587,14 @@ class WithdrawalService
         }, 3);
 
         return $this->reloadWithdrawal($order);
+    }
+
+    /**
+     * 查询退避：5 / 10 / 20 / 40 / 60 分钟封顶。
+     */
+    private function reconcileBackoffMinutes(int $attempts): int
+    {
+        return (int) min(5 * (2 ** max(0, $attempts - 1)), 60);
     }
 
     private function reloadWithdrawal(PayoutOrder $order): Withdrawal

@@ -10,6 +10,7 @@ use MultiTenantSaas\Modules\Distribution\Contracts\PayoutStatusQueryContract;
 use MultiTenantSaas\Modules\Distribution\Models\PayoutConfig;
 use MultiTenantSaas\Modules\Distribution\Models\PayoutOrder;
 use Yansongda\Pay\Pay;
+use Yansongda\Pay\Provider\Wechat;
 
 /**
  * 微信商家转账到零钱驱动（自动打款）
@@ -82,7 +83,9 @@ class WechatTransferDriver implements PayoutDriverContract, PayoutStatusQueryCon
         ];
 
         try {
-            $pay = Pay::wechat($this->buildConfig($config, $appId));
+            [$pay, $configKey] = $this->configurePay($config, $appId);
+            // SDK 通过 _config 选择 wechat[<name>]；该键会被 filter_params 从请求体剔除。
+            $payload['_config'] = $configKey;
             $result = $pay->transfer($payload);
             $data = $this->toArray($result);
 
@@ -140,9 +143,10 @@ class WechatTransferDriver implements PayoutDriverContract, PayoutStatusQueryCon
         }
 
         try {
-            $pay = Pay::wechat($this->buildConfig($config, $appId));
+            [$pay, $configKey] = $this->configurePay($config, $appId);
             $result = $pay->query([
                 '_action' => 'transfer',
+                '_config' => $configKey,
                 'out_batch_no' => $order->trade_no,
                 'out_detail_no' => $order->trade_no,
             ]);
@@ -180,6 +184,30 @@ class WechatTransferDriver implements PayoutDriverContract, PayoutStatusQueryCon
                 'fail_reason' => mb_substr($e->getMessage(), 0, 250),
             ];
         }
+    }
+
+    /**
+     * 按租户注册并选择 SDK 配置。
+     *
+     * yansongda/pay v3 的 get_provider_config('wechat', $params) 读取全局配置的
+     * wechat[<name>]；直接把扁平商户配置传给 Pay::wechat() 会让它读到 []。
+     * 这里用租户独立 name + _force 重注册，并通过 _config 传给本次调用；
+     * 同一进程连续切换租户时，上一次的商户配置不会残留成本次的。
+     *
+     * @return array{0: Wechat, 1: string}
+     */
+    private function configurePay(PayoutConfig $config, string $appId): array
+    {
+        $configKey = 'tenant_'.($config->tenant_id ?? 'default');
+
+        Pay::config([
+            '_force' => true,
+            'wechat' => [
+                $configKey => $this->buildConfig($config, $appId),
+            ],
+        ]);
+
+        return [Pay::wechat(), $configKey];
     }
 
     /**
